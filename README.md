@@ -1,131 +1,118 @@
 # ArduPilot Project
 
-You can find lots of development information at the [ArduPilot development site](http://dev.ardupilot.com)
+[![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/ArduPilot/ardupilot?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-#### To compile APM2.x Ardupilot after version 3.1 please follow the instructions found at 
+[![Build SemaphoreCI](https://semaphoreci.com/api/v1/ardupilot/ardupilot/branches/master/badge.svg)](https://semaphoreci.com/ardupilot/ardupilot)
 
-[Dev.Ardupilot] (http://dev.ardupilot.com/wiki/building-ardupilot-with-arduino-windows/) 
+[![Build Travis](https://travis-ci.org/ArduPilot/ardupilot.svg?branch=master)](https://travis-ci.org/ArduPilot/ardupilot)
 
+[![Coverity Scan Build Status](https://scan.coverity.com/projects/5331/badge.svg)](https://scan.coverity.com/projects/ardupilot-ardupilot)
 
-## Getting the source
+## The ArduPilot project is made up of: ##
 
-You can either download the source using the "ZIP" button at the top
-of the github page, or you can make a clone using git:
+- ArduCopter (or APM:Copter) : [code](https://github.com/ArduPilot/ardupilot/tree/master/ArduCopter), [wiki](http://ardupilot.org/copter/index.html)
 
-```
-git clone git://github.com/diydrones/ardupilot.git
-```
+- ArduPlane (or APM:Plane) : [code](https://github.com/ArduPilot/ardupilot/tree/master/ArduPlane), [wiki](http://ardupilot.org/plane/index.html)
 
-## Prerequisites
+- ArduRover (or APMrover2) : [code](https://github.com/ArduPilot/ardupilot/tree/master/APMrover2), [wiki](http://ardupilot.org/rover/index.html)
 
-### Ubuntu Linux
+- ArduSub (or APM:Sub) : [code](https://github.com/ArduPilot/ardupilot/tree/master/ArduSub), [wiki](http://ardusub.com/)
 
-The following packages are required to build ardupilot for the
-APM1/APM2 (Arduino) platform in Ubuntu: `gawk make git arduino-core
-g++`
+- Antenna Tracker : [code](https://github.com/ArduPilot/ardupilot/tree/master/AntennaTracker), [wiki](http://ardupilot.org/antennatracker/index.html)
 
-To build ardupilot for the PX4 platform, you'll first need to install
-the PX4 toolchain and download the PX4 source code.  See the [PX4
-toolchain installation
-page](https://pixhawk.ethz.ch/px4/dev/toolchain_installation_lin).
+## User Support & Discussion Forums ##
 
-The easiest way to install all these prerequisites is to run the
-`ardupilot/Tools/scripts/install-prereqs-ubuntu.sh` script, which will
-install all the required packages and download all the required
-software.
+- Support Forum: <http://discuss.ardupilot.org/>
 
+- Community Site: <http://ardupilot.org>
 
-## Building using the Arduino IDE
+## Developer Information ##
 
-ArduPilot is no longer compatible with the standard Arduino
-distribution.  You need to use a patched Arduino IDE to build
-ArduPilot.
+- Github repository: <https://github.com/ArduPilot/ardupilot>
 
-Do not try to use the Arduino IDE to build in Linux--you should follow
-the instructions in the "Building using make" section.
+- Main developer wiki: <http://dev.ardupilot.org>
 
-1. The patched ArduPilot Arduino IDE is available for Mac and Windows
-   from the [downloads
-   page](http://firmware.diydrones.com).
+- Developer discussion: <http://discuss.ardupilot.org>
 
-2. Unpack and launch the ArduPilot Arduino IDE. In the preferences
-   menu, set your sketchbook location to your downloaded or cloned
-   `ardupilot` directory.
+- Developer email group: drones-discuss@googlegroups.com. Deprecated November 2016. Included for historical reference.
 
-3. In the ArduPilot Arduino IDE, select your ArduPilot type (APM1 or
-   APM2) from the ArduPilot menu (in the top menubar).
+## Contributors ##
 
-4. Restart the ArduPilot Arduino IDE. You should now be able to build
-   ArduPlane or ArduCopter from source.
+- [Github statistics](https://github.com/ArduPilot/ardupilot/graphs/contributors)
 
-5. Remember that, after changing ArduPilot type (APM1 or APM2) in the
-   IDE, you'll need to close and restart the IDE before continuing.
+## How To Get Involved ##
 
+- The ArduPilot project is open source and we encourage participation and code contributions: [guidelines for contributors to the ardupilot codebase](http://dev.ardupilot.org/wiki/guidelines-for-contributors-to-the-apm-codebase)
 
-## Building using make
+- We have an active group of Beta Testers especially for ArduCopter to help us find bugs: [release procedures](http://dev.ardupilot.org/wiki/release-procedures)
 
- 1. Before you build the project for the first time, you'll need to run `make
-    configure` from a  sketch directory (i.e. ArduPlane, ArduCopter, etc...).
-    This will create a `config.mk` file at the top level of the repository. You
-    can set some defaults in `config.mk`
+- Desired Enhancements and Bugs can be posted to the [issues list](https://github.com/ArduPilot/ardupilot/issues).
 
- 2. In the sketch directory, type `make` to build for APM2. Alternatively,
-    `make apm1` will build for the APM1 and `make px4` will build for the PX4.
-    The binaries will generated in `/tmp/<i>sketchname</i>.build`.
+- Helping other users with log analysis on [http://discuss.ardupilot.org/](http://discuss.ardupilot.org/) is always appreciated:
 
- 3. Type `make upload` to upload. You may need to set the correct default
-    serial port in your `config.mk`.
+- There is a group of wiki editors as well in case documentation is your thing: <ardu-wiki-editors@googlegroups.com>
 
+- Developer discussions occur on <drones-discuss@google-groups.com>
 
-## Development using VirtualBox
+## License ##
 
-ardupilot has a standardized Linux virtual machine (VM) setup script
-that uses the free VirtualBox virtualization software.  You can use it
-to create a standard, reproducible development environment in just a
-few minutes in Linux, OS X, or Windows.
+The ArduPilot project is licensed under the GNU General Public
+License, version 3.
 
- 1. [Download VirtualBox](https://www.virtualbox.org/wiki/Downloads)
- for your Mac, Windows or Linux machine.
+- [Overview of license](http://dev.ardupilot.com/wiki/license-gplv3)
 
- 2. [Install vagrant](http://docs.vagrantup.com/v2/installation/).
+- [Full Text](https://github.com/ArduPilot/ardupilot/blob/master/COPYING.txt)
 
- 4. In the `ardupilot` directory, run `vagrant up` from the command
- line.  This will create a new Ubuntu Linux VM.
+## Maintainers ##
 
- 5. Run `vagrant ssh -c "ardupilot/Tools/scripts/install-prereqs-ubuntu.sh -y"`.
- This will install all the prerequisites for doing ardupilot development.
+Ardupilot is comprised of several parts, vehicles and boards. The list below
+contains the people that regularly contribute to the project and are responsible
+for reviewing patches on their specific area. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for more information.
 
-You can now run `vagrant ssh` to log in to the development
-environment.  The `~/ardupilot` directory in the VM is actually the
-`ardupilot` directory in your host operating system--changes in either
-directory show up in the other.
-
-Once you've followed the instructions above, here's how you would
-build ArduCopter for PX4 in the development environment:
-
-```
-$ vagrant ssh
-# cd ardupilot/ArduCopter
-# make configure
-```
-
-Back at the terminal:
-
-```
-# make px4
-# make px4-upload  # (optional)
-```
-
-# User Technical Support
-
-ArduPilot users should use the DIYDrones.com forums for technical support.
-
-# Development Team
-
-The ArduPilot project is open source and maintained by a team of volunteers.
-
-To contribute, you can send a pull request on Github. You can also
-join the [development discussion on Google
-Groups](https://groups.google.com/forum/?fromgroups#!forum/drones-discuss). Note
-that the Google Groups mailing lists are NOT for user tech support,
-and are moderated for new users to prevent off-topic discussion.
+- [Andrew Tridgell](https://github.com/tridge):
+  - ***Vehicle***: Plane, AntennaTracker
+  - ***Board***: APM1, APM2, Pixhawk, Pixhawk2, PixRacer
+- [Randy Mackay](https://github.com/rmackay9):
+  - ***Vehicle***: Copter, AntennaTracker
+- [Grant Morphett](https://github.com/gmorph):
+  - ***Vehicle***: Rover
+- [Tom Pittenger](https://github.com/magicrub):
+  - ***Vehicle***: Plane
+- [Chris Olson](https://github.com/ChristopherOlson) and [Bill Geyer](https://github.com/bnsgeyer):
+  - ***Vehicle***: TradHeli
+- [Paul Riseborough](https://github.com/priseborough):
+  - ***Subsystem***: AP_NavEKF2
+  - ***Subsystem***: AP_NavEKF3
+- [Lucas De Marchi](https://github.com/lucasdemarchi):
+  - ***Subsystem***: Linux
+- [Peter Barker](https://github.com/peterbarker):
+  - ***Subsystem***: DataFlash
+  - ***Subsystem***: Tools
+- [Michael du Breuil](https://github.com/WickedShell):
+  - ***Subsystem***: SMBus Batteries
+  - ***Subsystem***: GPS
+- [Francisco Ferreira](https://github.com/oxinarf):
+  - ***Bug Master***
+- [Matthias Badaire](https://github.com/badzz):
+  - ***Subsystem***: FRSky
+- [Eugene Shamaev](https://github.com/EShamaev):
+  - ***Subsystem***: CAN bus
+  - ***Subsystem***: UAVCAN
+- [Víctor Mayoral Vilches](https://github.com/vmayoral):
+  - ***Board***: PXF, Erle-Brain 2, PXFmini
+- [Mirko Denecke](https://github.com/mirkix):
+  - ***Board***: BBBmini, BeagleBone Blue, PocketPilot
+- [Georgii Staroselskii](https://github.com/staroselskii):
+  - ***Board***: NavIO
+- [Emile Castelnuovo](https://github.com/emilecastelnuovo):
+  - ***Board***: VRBrain
+- [Julien BERAUD](https://github.com/jberaud):
+  - ***Board***: Bebop & Bebop 2
+- [Matt Lawrence](https://github.com/Pedals2Paddles):
+  - ***Vehicle***: 3DR Solo & Solo based vehicles
+- [Gustavo José de Sousa](https://github.com/guludo):
+  - ***Subsystem***: Build system
+- [Craig Elder](https://github.com/CraigElder):
+  - ***Administration***: ArduPilot Technical Community Manager
+- [Jacob Walser](https://github.com/jaxxzer):
+  - ***Vehicle***: Sub

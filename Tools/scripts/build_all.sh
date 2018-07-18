@@ -8,75 +8,31 @@
 set -e
 set -x
 
-echo "Testing ArduPlane build"
-pushd ArduPlane
-for b in all apm2 apm2beta apm1-hil apm1-hilsensors apm2-hil apm2-hilsensors sitl sitl-mount linux apm2-obc; do
-    pwd
-    make clean
-    make $b -j4
-done
-popd
+export BUILDROOT="/tmp/all.build"
+rm -rf $BUILDROOT
 
-echo "Testing ArduCopter build"
-pushd ArduCopter
-for b in all apm2 apm1-hil apm2-hil sitl apm2-heli linux; do
-    pwd
-    make clean
-    make $b -j4
-done
-popd
+BOARDS="sitl linux"
 
-echo "Testing APMRover build"
-pushd APMrover2
-for b in all apm2 sitl apm2-hil linux; do
-    pwd
-    make clean
-    make $b -j4
-done
-popd
-
-echo "Testing AntennaTracker build"
-pushd AntennaTracker
-for b in apm2 sitl; do
-    pwd
-    make clean
-    make $b -j4
-done
-popd
-
-echo "Testing build of examples"
-
-examples="Tools/VARTest Tools/CPUInfo"
-for d in $examples; do
-    pushd $d
-    make clean
-    make apm2 -j4
-    make clean
-    make sitl -j4
-    popd
+for b in $BOARDS; do
+    echo "Testing $b build"
+    ./waf configure --board $b
+    ./waf clean
+    ./waf
 done
 
-test -d ../libmaple && {
-echo "Testing flymaple build"
-for d in ArduPlane ArduCopter APMrover2; do
-    pushd $d
-    make clean
-    make flymaple -j4
-    popd
-done
-}
-
+echo "Building Replay"
 pushd Tools/Replay
 make clean
-make linux -j4
+make
 popd
 
-test -n "$PX4_ROOT" && test -d "$PX4_ROOT" && {
-    ./Tools/scripts/build_all_px4.sh
-}
+./Tools/scripts/build_all_px4.sh
 
 test -n "$VRBRAIN_ROOT" && test -d "$VRBRAIN_ROOT" && {
     ./Tools/scripts/build_all_vrbrain.sh
 }
+
+echo "Testing configure all"
+./Tools/scripts/configure_all.py
 
 exit 0

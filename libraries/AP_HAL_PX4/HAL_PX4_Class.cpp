@@ -1,10 +1,12 @@
-/// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
-
-#include <AP_HAL.h>
+#include <AP_HAL/AP_HAL.h>
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_PX4
 
-#include <AP_HAL_PX4.h>
+#include <AP_HAL/utility/RCOutput_Tap.h>
+#include <AP_HAL_Empty/AP_HAL_Empty.h>
+#include <AP_HAL_Empty/AP_HAL_Empty_Private.h>
+
+#include "AP_HAL_PX4.h"
 #include "AP_HAL_PX4_Namespace.h"
 #include "HAL_PX4_Class.h"
 #include "Scheduler.h"
@@ -15,9 +17,12 @@
 #include "AnalogIn.h"
 #include "Util.h"
 #include "GPIO.h"
+#include "I2CDevice.h"
+#include "SPIDevice.h"
 
-#include <AP_HAL_Empty.h>
-#include <AP_HAL_Empty_Private.h>
+#if HAL_WITH_UAVCAN
+#include "CAN.h"
+#endif
 
 #include <stdlib.h>
 #include <systemlib/systemlib.h>
@@ -29,19 +34,24 @@
 #include <drivers/drv_hrt.h>
 
 using namespace PX4;
+using namespace ap;
 
-static Empty::EmptySemaphore  i2cSemaphore;
-static Empty::EmptyI2CDriver  i2cDriver(&i2cSemaphore);
-static Empty::EmptySPIDeviceManager spiDeviceManager;
-//static Empty::EmptyGPIO gpioDriver;
+//static Empty::GPIO gpioDriver;
 
 static PX4Scheduler schedulerInstance;
 static PX4Storage storageDriver;
 static PX4RCInput rcinDriver;
+#if defined(CONFIG_ARCH_BOARD_AEROFC_V1)
+static RCOutput_Tap rcoutDriver;
+#else
 static PX4RCOutput rcoutDriver;
+#endif
 static PX4AnalogIn analogIn;
 static PX4Util utilInstance;
 static PX4GPIO gpioDriver;
+
+static PX4::I2CDeviceManager i2c_mgr_instance;
+static PX4::SPIDeviceManager spi_mgr_instance;
 
 #if defined(CONFIG_ARCH_BOARD_PX4FMU_V2)
 #define UARTA_DEFAULT_DEVICE "/dev/ttyACM0"
@@ -49,12 +59,30 @@ static PX4GPIO gpioDriver;
 #define UARTC_DEFAULT_DEVICE "/dev/ttyS1"
 #define UARTD_DEFAULT_DEVICE "/dev/ttyS2"
 #define UARTE_DEFAULT_DEVICE "/dev/ttyS6"
+#define UARTF_DEFAULT_DEVICE "/dev/ttyS5"
+#elif defined(CONFIG_ARCH_BOARD_PX4FMU_V4) || defined(CONFIG_ARCH_BOARD_PX4FMU_V4PRO)
+#define UARTA_DEFAULT_DEVICE "/dev/ttyACM0"
+#define UARTB_DEFAULT_DEVICE "/dev/ttyS3"
+#define UARTC_DEFAULT_DEVICE "/dev/ttyS1"
+#define UARTD_DEFAULT_DEVICE "/dev/ttyS2"
+#define UARTE_DEFAULT_DEVICE "/dev/ttyS6" // frsky telem
+#define UARTF_DEFAULT_DEVICE "/dev/ttyS0" // wifi
+#elif defined(CONFIG_ARCH_BOARD_AEROFC_V1)
+#define UARTA_DEFAULT_DEVICE "/dev/ttyS1" // Aero
+#define UARTB_DEFAULT_DEVICE "/dev/ttyS5" // GPS
+#define UARTC_DEFAULT_DEVICE "/dev/ttyS3" // Telem
+// ttyS0: ESC
+// ttyS2: RC
+#define UARTD_DEFAULT_DEVICE "/dev/null"
+#define UARTE_DEFAULT_DEVICE "/dev/null"
+#define UARTF_DEFAULT_DEVICE "/dev/null"
 #else
 #define UARTA_DEFAULT_DEVICE "/dev/ttyACM0"
 #define UARTB_DEFAULT_DEVICE "/dev/ttyS3"
 #define UARTC_DEFAULT_DEVICE "/dev/ttyS2"
 #define UARTD_DEFAULT_DEVICE "/dev/null"
 #define UARTE_DEFAULT_DEVICE "/dev/null"
+#define UARTF_DEFAULT_DEVICE "/dev/null"
 #endif
 
 // 3 UART drivers, for GPS plus two mavlink-enabled devices
@@ -63,6 +91,7 @@ static PX4UARTDriver uartBDriver(UARTB_DEFAULT_DEVICE, "APM_uartB");
 static PX4UARTDriver uartCDriver(UARTC_DEFAULT_DEVICE, "APM_uartC");
 static PX4UARTDriver uartDDriver(UARTD_DEFAULT_DEVICE, "APM_uartD");
 static PX4UARTDriver uartEDriver(UARTE_DEFAULT_DEVICE, "APM_uartE");
+static PX4UARTDriver uartFDriver(UARTF_DEFAULT_DEVICE, "APM_uartF");
 
 HAL_PX4::HAL_PX4() :
     AP_HAL::HAL(
@@ -71,8 +100,10 @@ HAL_PX4::HAL_PX4() :
         &uartCDriver,  /* uartC */
         &uartDDriver,  /* uartD */
         &uartEDriver,  /* uartE */
-        &i2cDriver, /* i2c */
-        &spiDeviceManager, /* spi */
+        &uartFDriver,  /* uartF */
+        nullptr,       /* no uartG */
+        &i2c_mgr_instance,
+        &spi_mgr_instance,
         &analogIn, /* analogin */
         &storageDriver, /* storage */
         &uartADriver, /* console */
@@ -80,7 +111,9 @@ HAL_PX4::HAL_PX4() :
         &rcinDriver,  /* rcinput */
         &rcoutDriver, /* rcoutput */
         &schedulerInstance, /* scheduler */
-        &utilInstance) /* util */
+        &utilInstance, /* util */
+        nullptr,    /* no onboard optical flow */
+        nullptr)   /* CAN */
 {}
 
 bool _px4_thread_should_exit = false;        /**< Daemon exit flag */
@@ -93,7 +126,7 @@ extern const AP_HAL::HAL& hal;
 /*
   set the priority of the main APM task
  */
-static void set_priority(uint8_t priority)
+void hal_px4_set_priority(uint8_t priority)
 {
     struct sched_param param;
     param.sched_priority = priority;
@@ -108,37 +141,33 @@ static void set_priority(uint8_t priority)
  */
 static void loop_overtime(void *)
 {
-    set_priority(APM_OVERTIME_PRIORITY);
+    hal_px4_set_priority(APM_OVERTIME_PRIORITY);
     px4_ran_overtime = true;
 }
 
+static AP_HAL::HAL::Callbacks* g_callbacks;
+
 static int main_loop(int argc, char **argv)
 {
-    extern void setup(void);
-    extern void loop(void);
-
-
     hal.uartA->begin(115200);
     hal.uartB->begin(38400);
     hal.uartC->begin(57600);
     hal.uartD->begin(57600);
     hal.uartE->begin(57600);
-    hal.scheduler->init(NULL);
-    hal.rcin->init(NULL);
-    hal.rcout->init(NULL);
-    hal.analogin->init(NULL);
-    hal.gpio->init();
+    hal.scheduler->init();
 
-
+    // init the I2C wrapper class
+    PX4_I2C::init_lock();
+    
     /*
       run setup() at low priority to ensure CLI doesn't hang the
       system, and to allow initial sensor read loops to run
      */
-    set_priority(APM_STARTUP_PRIORITY);
+    hal_px4_set_priority(APM_STARTUP_PRIORITY);
 
     schedulerInstance.hal_initialized();
 
-    setup();
+    g_callbacks->setup();
     hal.scheduler->system_initialized();
 
     perf_counter_t perf_loop = perf_alloc(PC_ELAPSED, "APM_loop");
@@ -150,7 +179,7 @@ static int main_loop(int argc, char **argv)
     /*
       switch to high priority for main loop
      */
-    set_priority(APM_MAIN_PRIORITY);
+    hal_px4_set_priority(APM_MAIN_PRIORITY);
 
     while (!_px4_thread_should_exit) {
         perf_begin(perf_loop);
@@ -161,16 +190,16 @@ static int main_loop(int argc, char **argv)
           will only ever be called if a loop() call runs for more than
           0.1 second
          */
-        hrt_call_after(&loop_overtime_call, 100000, (hrt_callout)loop_overtime, NULL);
+        hrt_call_after(&loop_overtime_call, 100000, (hrt_callout)loop_overtime, nullptr);
 
-        loop();
+        g_callbacks->loop();
 
         if (px4_ran_overtime) {
             /*
               we ran over 1s in loop(), and our priority was lowered
               to let a driver run. Set it back to high priority now.
              */
-            set_priority(APM_MAIN_PRIORITY);
+            hal_px4_set_priority(APM_MAIN_PRIORITY);
             perf_count(perf_overrun);
             px4_ran_overtime = false;
         }
@@ -178,11 +207,11 @@ static int main_loop(int argc, char **argv)
         perf_end(perf_loop);
 
         /*
-          give up 500 microseconds of time, to ensure drivers get a
+          give up 250 microseconds of time, to ensure drivers get a
           chance to run. This relies on the accurate semaphore wait
           using hrt in semaphore.cpp
          */
-        hal.scheduler->delay_microseconds(500);
+        hal.scheduler->delay_microseconds(250);
     }
     thread_running = false;
     return 0;
@@ -196,17 +225,19 @@ static void usage(void)
     printf("\t-d2 DEVICE         set second terminal device (default %s)\n", UARTC_DEFAULT_DEVICE);
     printf("\t-d3 DEVICE         set 3rd terminal device (default %s)\n", UARTD_DEFAULT_DEVICE);
     printf("\t-d4 DEVICE         set 2nd GPS device (default %s)\n", UARTE_DEFAULT_DEVICE);
+    printf("\t-d5 DEVICE         set uartF (default %s)\n", UARTF_DEFAULT_DEVICE);
     printf("\n");
 }
 
 
-void HAL_PX4::init(int argc, char * const argv[]) const 
+void HAL_PX4::run(int argc, char * const argv[], Callbacks* callbacks) const
 {
     int i;
     const char *deviceA = UARTA_DEFAULT_DEVICE;
     const char *deviceC = UARTC_DEFAULT_DEVICE;
     const char *deviceD = UARTD_DEFAULT_DEVICE;
     const char *deviceE = UARTE_DEFAULT_DEVICE;
+    const char *deviceF = UARTF_DEFAULT_DEVICE;
 
     if (argc < 1) {
         printf("%s: missing command (try '%s start')", 
@@ -214,6 +245,9 @@ void HAL_PX4::init(int argc, char * const argv[]) const
         usage();
         exit(1);
     }
+
+    assert(callbacks);
+    g_callbacks = callbacks;
 
     for (i=0; i<argc; i++) {
         if (strcmp(argv[i], "start") == 0) {
@@ -227,16 +261,18 @@ void HAL_PX4::init(int argc, char * const argv[]) const
             uartCDriver.set_device_path(deviceC);
             uartDDriver.set_device_path(deviceD);
             uartEDriver.set_device_path(deviceE);
-            printf("Starting %s uartA=%s uartC=%s uartD=%s uartE=%s\n", 
-                   SKETCHNAME, deviceA, deviceC, deviceD, deviceE);
+            uartFDriver.set_device_path(deviceF);
+
+            printf("Starting %s uartA=%s uartC=%s uartD=%s uartE=%s uartF=%s\n",
+                   SKETCHNAME, deviceA, deviceC, deviceD, deviceE, deviceF);
 
             _px4_thread_should_exit = false;
-            daemon_task = task_spawn_cmd(SKETCHNAME,
-                                     SCHED_FIFO,
-                                     APM_MAIN_PRIORITY,
-                                     8192,
-                                     main_loop,
-                                     NULL);
+            daemon_task = px4_task_spawn_cmd(SKETCHNAME,
+                                             SCHED_FIFO,
+                                             APM_MAIN_PRIORITY,
+                                             APM_MAIN_THREAD_STACK_SIZE,
+                                             main_loop,
+                                             nullptr);
             exit(0);
         }
 
@@ -299,13 +335,27 @@ void HAL_PX4::init(int argc, char * const argv[]) const
                 exit(1);
             }
         }
+
+        if (strcmp(argv[i], "-d5") == 0) {
+            // set uartF
+            if (argc > i + 1) {
+                deviceF = strdup(argv[i+1]);
+            } else {
+                printf("missing parameter to -d5 DEVICE\n");
+                usage();
+                exit(1);
+            }
+        }
     }
  
     usage();
     exit(1);
 }
 
-const HAL_PX4 AP_HAL_PX4;
+const AP_HAL::HAL& AP_HAL::get_HAL() {
+    static const HAL_PX4 hal_px4;
+    return hal_px4;
+}
 
 #endif // CONFIG_HAL_BOARD == HAL_BOARD_PX4
 

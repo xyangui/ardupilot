@@ -15,29 +15,40 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
-#include <AP_HAL.h>
-
 #include "Buzzer.h"
+
+#include <AP_HAL/AP_HAL.h>
+
 #include "AP_Notify.h"
+
+#ifndef HAL_BUZZER_ON
+ #define HAL_BUZZER_ON 1
+ #define HAL_BUZZER_OFF 0 
+#endif
+
+
 
 extern const AP_HAL::HAL& hal;
 
-void Buzzer::init()
+
+bool Buzzer::init()
 {
-    // return immediately if disabled
-    if (!AP_Notify::flags.external_leds) {
-        return;
-    }
+#if defined(HAL_BUZZER_PIN)
+    _pin = HAL_BUZZER_PIN;
+#else
+    _pin = pNotify->get_buzz_pin();
+#endif
+    if(!_pin) return false;
 
     // setup the pin and ensure it's off
-    hal.gpio->pinMode(BUZZER_PIN, HAL_GPIO_OUTPUT);
+    hal.gpio->pinMode(_pin, HAL_GPIO_OUTPUT);
     on(false);
 
-    // set initial boot states. This prevents us issueing a arming
+    // set initial boot states. This prevents us issuing a arming
     // warning in plane and rover on every boot
     _flags.armed = AP_Notify::flags.armed;
     _flags.failsafe_battery = AP_Notify::flags.failsafe_battery;
+    return true;
 }
 
 // update - updates led according to timed_updated.  Should be called at 50Hz
@@ -46,6 +57,12 @@ void Buzzer::update()
     // return immediately if disabled
     if (!AP_Notify::flags.external_leds) {
         return;
+    }
+
+    // check for arming failed event
+    if (AP_Notify::events.arming_failed) {
+        // arming failed buzz
+        play_pattern(SINGLE_BUZZ);
     }
 
     // reduce 50hz call down to 10hz
@@ -87,37 +104,14 @@ void Buzzer::update()
                         break;
                 }
                 return;
-            case GPS_GLITCH:
-                // play bethoven's 5th type buzz (three fast, one long)
-                switch (_pattern_counter) {
-                    case 1:
-                    case 3:
-                    case 5:
-                    case 7:
-                        on(true);
-                        break;
-                    case 2:
-                    case 4:
-                    case 6:
-                        on(false);
-                        break;
-                    case 17:
-                        on(false);
-                        _pattern = NONE;
-                        break;
-                    default:
-                        // do nothing
-                        break;
-                }
-                return;
             case ARMING_BUZZ:
                 // record start time
                 if (_pattern_counter == 1) {
-                    _arming_buzz_start_ms = hal.scheduler->millis();
+                    _arming_buzz_start_ms = AP_HAL::millis();
                     on(true);
                 } else {
                     // turn off buzzer after 3 seconds
-                    if (hal.scheduler->millis() - _arming_buzz_start_ms >= BUZZER_ARMING_BUZZ_MS) {
+                    if (AP_HAL::millis() - _arming_buzz_start_ms >= BUZZER_ARMING_BUZZ_MS) {
                         _arming_buzz_start_ms = 0;
                         on(false);
                         _pattern = NONE;
@@ -191,36 +185,6 @@ void Buzzer::update()
         return;
     }
 
-    // check arming failed
-    if (_flags.arming_failed != AP_Notify::flags.arming_failed) {
-        _flags.arming_failed = AP_Notify::flags.arming_failed;
-        if (_flags.arming_failed) {
-            // arming failed buzz
-            play_pattern(SINGLE_BUZZ);
-        }
-        return;
-    }
-
-    // check gps glitch
-    if (_flags.gps_glitching != AP_Notify::flags.gps_glitching) {
-        _flags.gps_glitching = AP_Notify::flags.gps_glitching;
-        if (_flags.gps_glitching) {
-            // gps glitch warning buzz
-            play_pattern(GPS_GLITCH);
-        }
-        return;
-    }
-
-    // check gps failsafe
-    if (_flags.failsafe_gps != AP_Notify::flags.failsafe_gps) {
-        _flags.failsafe_gps = AP_Notify::flags.failsafe_gps;
-        if (_flags.failsafe_gps) {
-            // gps glitch warning buzz
-            play_pattern(GPS_GLITCH);
-        }
-        return;
-    }
-
     // check ekf bad
     if (_flags.ekf_bad != AP_Notify::flags.ekf_bad) {
         _flags.ekf_bad = AP_Notify::flags.ekf_bad;
@@ -231,14 +195,9 @@ void Buzzer::update()
         return;
     }
 
-    // check baro glitch
-    if (_flags.baro_glitching != AP_Notify::flags.baro_glitching) {
-        _flags.baro_glitching = AP_Notify::flags.baro_glitching;
-        if (_flags.baro_glitching) {
-            // baro glitch warning buzz
-            play_pattern(BARO_GLITCH);
-        }
-        return;
+    // if vehicle lost was enabled, starting beep
+    if (AP_Notify::flags.vehicle_lost) {
+        play_pattern(DOUBLE_BUZZ);
     }
 
     // if battery failsafe constantly single buzz
@@ -259,7 +218,7 @@ void Buzzer::on(bool turn_on)
     _flags.on = turn_on;
 
     // pull pin high or low
-    hal.gpio->write(BUZZER_PIN, _flags.on);
+    hal.gpio->write(_pin, _flags.on? HAL_BUZZER_ON : HAL_BUZZER_OFF);
 }
 
 /// play_pattern - plays the defined buzzer pattern
@@ -268,3 +227,4 @@ void Buzzer::play_pattern(BuzzerPattern pattern_id)
     _pattern = pattern_id;
     _pattern_counter = 0;
 }
+

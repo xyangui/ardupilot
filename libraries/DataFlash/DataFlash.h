@@ -1,516 +1,384 @@
-/// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
-
 /* ************************************************************ */
 /* Test for DataFlash Log library                               */
 /* ************************************************************ */
-#ifndef DataFlash_h
-#define DataFlash_h
+#pragma once
 
-#include <AP_Common.h>
-#include <AP_Param.h>
-#include <AP_GPS.h>
-#include <AP_InertialSensor.h>
-#include <AP_Baro.h>
-#include <AP_AHRS.h>
+#include <AP_HAL/AP_HAL.h>
+#include <AP_Common/AP_Common.h>
+#include <AP_Param/AP_Param.h>
+#include <AP_GPS/AP_GPS.h>
+#include <AP_InertialSensor/AP_InertialSensor.h>
+#include <AP_RSSI/AP_RSSI.h>
+#include <AP_Baro/AP_Baro.h>
+#include <AP_AHRS/AP_AHRS.h>
+#include <AP_Vehicle/AP_Vehicle.h>
+#include <AP_Mission/AP_Mission.h>
+#include <AP_Airspeed/AP_Airspeed.h>
+#include <AP_BattMonitor/AP_BattMonitor.h>
+#include <AP_RPM/AP_RPM.h>
+#include <AP_RangeFinder/AP_RangeFinder.h>
+#include <DataFlash/LogStructure.h>
+#include <AP_Motors/AP_Motors.h>
+#include <AP_Rally/AP_Rally.h>
+#include <AP_Beacon/AP_Beacon.h>
+#include <AP_Proximity/AP_Proximity.h>
+#include <AP_InertialSensor/AP_InertialSensor_Backend.h>
+
 #include <stdint.h>
 
-#if HAL_CPU_CLASS < HAL_CPU_CLASS_75 && defined(APM_BUILD_DIRECTORY)
-  #if (APM_BUILD_TYPE(APM_BUILD_ArduCopter) || defined(__AVR_ATmega1280__))
-    #define DATAFLASH_NO_CLI
-  #endif
+#if CONFIG_HAL_BOARD == HAL_BOARD_PX4
+#include <uORB/topics/esc_status.h>
 #endif
+
+#include "DFMessageWriter.h"
+
+class DataFlash_Backend;
+
+enum DataFlash_Backend_Type {
+    DATAFLASH_BACKEND_NONE = 0,
+    DATAFLASH_BACKEND_FILE = 1,
+    DATAFLASH_BACKEND_MAVLINK = 2,
+    DATAFLASH_BACKEND_BOTH = 3,
+};
+
+// fwd declarations to avoid include errors
+class AC_AttitudeControl;
+class AC_PosControl;
 
 class DataFlash_Class
 {
+    friend class DataFlash_Backend; // for _num_types
+
 public:
+    FUNCTOR_TYPEDEF(vehicle_startup_message_Log_Writer, void);
+
+    DataFlash_Class(const AP_Int32 &log_bitmask);
+
+    /* Do not allow copies */
+    DataFlash_Class(const DataFlash_Class &other) = delete;
+    DataFlash_Class &operator=(const DataFlash_Class&) = delete;
+
+    // get singleton instance
+    static DataFlash_Class *instance(void) {
+        return _instance;
+    }
+
+    void set_mission(const AP_Mission *mission);
+
     // initialisation
-    virtual void Init(const struct LogStructure *structure, uint8_t num_types);
-    virtual bool CardInserted(void) = 0;
+    void Init(const struct LogStructure *structure, uint8_t num_types);
+
+    bool CardInserted(void);
 
     // erase handling
-    virtual bool NeedErase(void) = 0;
-    virtual void EraseAll() = 0;
+    void EraseAll();
 
     /* Write a block of data at current offset */
-    virtual void WriteBlock(const void *pBuffer, uint16_t size) = 0;
+    void WriteBlock(const void *pBuffer, uint16_t size);
+    /* Write an *important* block of data at current offset */
+    void WriteCriticalBlock(const void *pBuffer, uint16_t size);
 
     // high level interface
-    virtual uint16_t find_last_log(void) = 0;
-    virtual void get_log_boundaries(uint16_t log_num, uint16_t & start_page, uint16_t & end_page) = 0;
-    virtual void get_log_info(uint16_t log_num, uint32_t &size, uint32_t &time_utc) = 0;
-    virtual int16_t get_log_data(uint16_t log_num, uint16_t page, uint32_t offset, uint16_t len, uint8_t *data) = 0;
-    virtual uint16_t get_num_logs(void) = 0;
-#ifndef DATAFLASH_NO_CLI
-    virtual void LogReadProcess(uint16_t log_num,
-                                uint16_t start_page, uint16_t end_page, 
-                                void (*printMode)(AP_HAL::BetterStream *port, uint8_t mode),
-                                AP_HAL::BetterStream *port) = 0;
-    virtual void DumpPageInfo(AP_HAL::BetterStream *port) = 0;
-    virtual void ShowDeviceInfo(AP_HAL::BetterStream *port) = 0;
-    virtual void ListAvailableLogs(AP_HAL::BetterStream *port) = 0;
-#endif // DATAFLASH_NO_CLI
+    uint16_t find_last_log() const;
+    void get_log_boundaries(uint16_t log_num, uint16_t & start_page, uint16_t & end_page);
+    uint16_t get_num_logs(void);
 
-    /* logging methods common to all vehicles */
-    uint16_t StartNewLog(void);
-    void AddLogFormats(const struct LogStructure *structures, uint8_t num_types);
+    void setVehicle_Startup_Log_Writer(vehicle_startup_message_Log_Writer writer);
+
+    void PrepForArming();
+
     void EnableWrites(bool enable) { _writes_enabled = enable; }
-    void Log_Write_Format(const struct LogStructure *structure);
+    bool WritesEnabled() const { return _writes_enabled; }
+
+    void StopLogging();
+
     void Log_Write_Parameter(const char *name, float value);
-    void Log_Write_GPS(const AP_GPS &gps, uint8_t instance, int32_t relative_alt);
-    void Log_Write_IMU(const AP_InertialSensor &ins);
+    void Log_Write_GPS(uint8_t instance, uint64_t time_us=0);
+    void Log_Write_RFND(const RangeFinder &rangefinder);
+    void Log_Write_IMU();
+    void Log_Write_IMUDT(uint64_t time_us, uint8_t imu_mask);
+    bool Log_Write_ISBH(uint16_t seqno,
+                        AP_InertialSensor::IMU_SENSOR_TYPE sensor_type,
+                        uint8_t instance,
+                        uint16_t multiplier,
+                        uint16_t sample_count,
+                        uint64_t sample_us,
+                        float sample_rate_hz);
+    bool Log_Write_ISBD(uint16_t isb_seqno,
+                        uint16_t seqno,
+                        const int16_t x[32],
+                        const int16_t y[32],
+                        const int16_t z[32]);
+    void Log_Write_Vibration();
     void Log_Write_RCIN(void);
     void Log_Write_RCOUT(void);
-    void Log_Write_Baro(AP_Baro &baro);
+    void Log_Write_RSSI(AP_RSSI &rssi);
+    void Log_Write_Baro(uint64_t time_us=0);
     void Log_Write_Power(void);
     void Log_Write_AHRS2(AP_AHRS &ahrs);
+    void Log_Write_POS(AP_AHRS &ahrs);
 #if AP_AHRS_NAVEKF_AVAILABLE
     void Log_Write_EKF(AP_AHRS_NavEKF &ahrs);
 #endif
-    void Log_Write_MavCmd(uint16_t cmd_total, const mavlink_mission_item_t& mav_cmd);
+    bool Log_Write_MavCmd(uint16_t cmd_total, const mavlink_mission_item_t& mav_cmd);
     void Log_Write_Radio(const mavlink_radio_t &packet);
     void Log_Write_Message(const char *message);
-    void Log_Write_Message_P(const prog_char_t *message);
-    void Log_Write_Camera(const AP_AHRS &ahrs, const AP_GPS &gps, const Location &current_loc);
+    void Log_Write_MessageF(const char *fmt, ...);
+    void Log_Write_CameraInfo(enum LogMessages msg, const AP_AHRS &ahrs, const Location &current_loc);
+    void Log_Write_Camera(const AP_AHRS &ahrs, const Location &current_loc);
+    void Log_Write_Trigger(const AP_AHRS &ahrs, const Location &current_loc);
+    void Log_Write_ESC(void);
+    void Log_Write_Airspeed(AP_Airspeed &airspeed);
+    void Log_Write_Attitude(AP_AHRS &ahrs, const Vector3f &targets);
+    void Log_Write_AttitudeView(AP_AHRS_View &ahrs, const Vector3f &targets);
+    void Log_Write_Current();
+    void Log_Write_Compass(uint64_t time_us=0);
+    void Log_Write_Mode(uint8_t mode, uint8_t reason);
 
-    bool logging_started(void) const { return log_write_started; }
+    void Log_Write_EntireMission(const AP_Mission &mission);
+    void Log_Write_Mission_Cmd(const AP_Mission &mission,
+                               const AP_Mission::Mission_Command &cmd);
+    void Log_Write_Origin(uint8_t origin_type, const Location &loc);
+    void Log_Write_RPM(const AP_RPM &rpm_sensor);
+    void Log_Write_Rate(const AP_AHRS &ahrs,
+                        const AP_Motors &motors,
+                        const AC_AttitudeControl &attitude_control,
+                        const AC_PosControl &pos_control);
+    void Log_Write_Rally(const AP_Rally &rally);
+    void Log_Write_VisualOdom(float time_delta, const Vector3f &angle_delta, const Vector3f &position_delta, float confidence);
+    void Log_Write_AOA_SSA(AP_AHRS &ahrs);
+    void Log_Write_Beacon(AP_Beacon &beacon);
+    void Log_Write_Proximity(AP_Proximity &proximity);
+    void Log_Write_SRTL(bool active, uint16_t num_points, uint16_t max_points, uint8_t action, const Vector3f& point);
 
-	/*
-      every logged packet starts with 3 bytes
-    */
-    struct log_Header {
-        uint8_t head1, head2, msgid;
+    void Log_Write(const char *name, const char *labels, const char *fmt, ...);
+    void Log_Write(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
+    void Log_WriteV(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, va_list arg_list);
+
+    // This structure provides information on the internal member data of a PID for logging purposes
+    struct PID_Info {
+        float desired;
+        float P;
+        float I;
+        float D;
+        float FF;
+        float AFF;
     };
 
-protected:
-    /*
-    read and print a log entry using the format strings from the given structure
-    */
-    void _print_log_entry(uint8_t msg_type, 
-                          void (*print_mode)(AP_HAL::BetterStream *port, uint8_t mode),
-                          AP_HAL::BetterStream *port);
+    void Log_Write_PID(uint8_t msg_type, const PID_Info &info);
+
+    // returns true if logging of a message should be attempted
+    bool should_log(uint32_t mask) const;
+
+    bool logging_started(void);
+
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL || CONFIG_HAL_BOARD == HAL_BOARD_LINUX
+    // currently only DataFlash_File support this:
+    void flush(void);
+#endif
+
+    void handle_mavlink_msg(class GCS_MAVLINK &, mavlink_message_t* msg);
+
+    void periodic_tasks(); // may want to split this into GCS/non-GCS duties
+
+    // number of blocks that have been dropped
+    uint32_t num_dropped(void) const;
+
+    // accesss to public parameters
+    bool log_while_disarmed(void) const { return _params.log_disarmed != 0; }
+    uint8_t log_replay(void) const { return _params.log_replay; }
     
-    void Log_Fill_Format(const struct LogStructure *structure, struct log_Format &pkt);
-    void Log_Write_Parameter(const AP_Param *ap, const AP_Param::ParamToken &token, 
-                             enum ap_var_type type);
-    void Log_Write_Parameters(void);
-    virtual uint16_t start_new_log(void) = 0;
+    vehicle_startup_message_Log_Writer _vehicle_messages;
+
+    // parameter support
+    static const struct AP_Param::GroupInfo        var_info[];
+    struct {
+        AP_Int8 backend_types;
+        AP_Int8 file_bufsize; // in kilobytes
+        AP_Int8 file_disarm_rot;
+        AP_Int8 log_disarmed;
+        AP_Int8 log_replay;
+        AP_Int8 mav_bufsize; // in kilobytes
+    } _params;
+
+    const struct LogStructure *structure(uint16_t num) const;
+    const struct UnitStructure *unit(uint16_t num) const;
+    const struct MultiplierStructure *multiplier(uint16_t num) const;
+
+    // methods for mavlink SYS_STATUS message (send_extended_status1)
+    // these methods cover only the first logging backend used -
+    // typically DataFlash_File.
+    bool logging_present() const;
+    bool logging_enabled() const;
+    bool logging_failed() const;
+
+    void set_vehicle_armed(bool armed_state);
+    bool vehicle_is_armed() const { return _armed; }
+
+    void handle_log_send();
+    bool in_log_download() const { return transfer_activity != IDLE; }
+
+    float quiet_nanf() const { return nanf("0x4152"); } // "AR"
+    double quiet_nan() const { return nan("0x4152445550490a"); } // "ARDUPI"
+
+protected:
 
     const struct LogStructure *_structures;
     uint8_t _num_types;
-    bool _writes_enabled;
-    bool log_write_started;
+    const struct UnitStructure *_units = log_Units;
+    const struct MultiplierStructure *_multipliers = log_Multipliers;
+    const uint8_t _num_units = (sizeof(log_Units) / sizeof(log_Units[0]));
+    const uint8_t _num_multipliers = (sizeof(log_Multipliers) / sizeof(log_Multipliers[0]));
+
+    /* Write a block with specified importance */
+    /* might be useful if you have a boolean indicating a message is
+     * important... */
+    void WritePrioritisedBlock(const void *pBuffer, uint16_t size,
+                               bool is_critical);
+
+private:
+    #define DATAFLASH_MAX_BACKENDS 2
+    uint8_t _next_backend;
+    DataFlash_Backend *backends[DATAFLASH_MAX_BACKENDS];
+    const AP_Int32 &_log_bitmask;
+
+    void internal_error() const;
 
     /*
-      read a block
-    */
-    virtual void ReadBlock(void *pkt, uint16_t size) = 0;
+     * support for dynamic Log_Write; user-supplies name, format,
+     * labels and values in a single function call.
+     */
 
-};
+    // this structure looks much like struct LogStructure in
+    // LogStructure.h, however we need to remember a pointer value for
+    // efficiency of finding message types
+    struct log_write_fmt {
+        struct log_write_fmt *next;
+        uint8_t msg_type;
+        uint8_t msg_len;
+        uint8_t sent_mask; // bitmask of backends sent to
+        const char *name;
+        const char *fmt;
+        const char *labels;
+        const char *units;
+        const char *mults;
+    } *log_write_fmts;
 
-/*
-  unfortunately these need to be macros because of a limitation of
-  named member structure initialisation in g++
- */
-#define LOG_PACKET_HEADER	       uint8_t head1, head2, msgid;
-#define LOG_PACKET_HEADER_INIT(id) head1 : HEAD_BYTE1, head2 : HEAD_BYTE2, msgid : id
+    // return (possibly allocating) a log_write_fmt for a name
+    struct log_write_fmt *msg_fmt_for_name(const char *name, const char *labels, const char *units, const char *mults, const char *fmt);
 
-// once the logging code is all converted we will remove these from
-// this header
-#define HEAD_BYTE1  0xA3    // Decimal 163
-#define HEAD_BYTE2  0x95    // Decimal 149
+    // returns true if msg_type is associated with a message
+    bool msg_type_in_use(uint8_t msg_type) const;
 
-/*
-Format characters in the format string for binary log messages
-  b   : int8_t
-  B   : uint8_t
-  h   : int16_t
-  H   : uint16_t
-  i   : int32_t
-  I   : uint32_t
-  f   : float
-  n   : char[4]
-  N   : char[16]
-  Z   : char[64]
-  c   : int16_t * 100
-  C   : uint16_t * 100
-  e   : int32_t * 100
-  E   : uint32_t * 100
-  L   : int32_t latitude/longitude
-  M   : uint8_t flight mode
- */
+    // return a msg_type which is not currently in use (or -1 if none available)
+    int16_t find_free_msg_type() const;
 
-// structure used to define logging format
-struct LogStructure {
-    uint8_t msg_type;
-    uint8_t msg_len;
-    const char name[5];
-    const char format[16];
-    const char labels[64];
-};
+    // fill LogStructure with information about msg_type
+    bool fill_log_write_logstructure(struct LogStructure &logstruct, const uint8_t msg_type) const;
 
-/*
-  log structures common to all vehicle types
- */
-struct PACKED log_Format {
-    LOG_PACKET_HEADER;
-    uint8_t type;
-    uint8_t length;
-    char name[4];
-    char format[16];
-    char labels[64];
-};
+    // calculate the length of a message using fields specified in
+    // fmt; includes the message header
+    int16_t Log_Write_calc_msg_len(const char *fmt) const;
 
-struct PACKED log_Parameter {
-    LOG_PACKET_HEADER;
-    char name[16];
-    float value;
-};
+    bool _armed;
 
-struct PACKED log_GPS {
-    LOG_PACKET_HEADER;
-    uint8_t  status;
-    uint32_t gps_week_ms;
-    uint16_t gps_week;
-    uint8_t  num_sats;
-    uint16_t hdop;
-    int32_t  latitude;
-    int32_t  longitude;
-    int32_t  rel_altitude;
-    int32_t  altitude;
-    uint32_t ground_speed;
-    int32_t  ground_course;
-    float    vel_z;
-    uint32_t apm_time;
-};
-
-struct PACKED log_GPS2 {
-    LOG_PACKET_HEADER;
-    uint8_t  status;
-    uint32_t gps_week_ms;
-    uint16_t gps_week;
-    uint8_t  num_sats;
-    uint16_t hdop;
-    int32_t  latitude;
-    int32_t  longitude;
-    int32_t  altitude;
-    uint32_t ground_speed;
-    int32_t  ground_course;
-    float    vel_z;
-    uint32_t apm_time;
-    uint8_t  dgps_numch;
-    uint32_t dgps_age;
-};
-
-struct PACKED log_Message {
-    LOG_PACKET_HEADER;
-    char msg[64];
-};
-
-struct PACKED log_IMU {
-    LOG_PACKET_HEADER;
-    uint32_t timestamp;
-    float gyro_x, gyro_y, gyro_z;
-    float accel_x, accel_y, accel_z;
-};
-
-struct PACKED log_RCIN {
-    LOG_PACKET_HEADER;
-    uint32_t timestamp;
-    uint16_t chan1;
-    uint16_t chan2;
-    uint16_t chan3;
-    uint16_t chan4;
-    uint16_t chan5;
-    uint16_t chan6;
-    uint16_t chan7;
-    uint16_t chan8;
-    uint16_t chan9;
-    uint16_t chan10;
-    uint16_t chan11;
-    uint16_t chan12;
-    uint16_t chan13;
-    uint16_t chan14;
-};
-
-struct PACKED log_RCOUT {
-    LOG_PACKET_HEADER;
-    uint32_t timestamp;
-    uint16_t chan1;
-    uint16_t chan2;
-    uint16_t chan3;
-    uint16_t chan4;
-    uint16_t chan5;
-    uint16_t chan6;
-    uint16_t chan7;
-    uint16_t chan8;
-    uint16_t chan9;
-    uint16_t chan10;
-    uint16_t chan11;
-    uint16_t chan12;
-};
-
-struct PACKED log_BARO {
-    LOG_PACKET_HEADER;
-    uint32_t timestamp;
-    float   altitude;
-    float   pressure;
-    int16_t temperature;
-};
-
-struct PACKED log_AHRS {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    int16_t roll;
-    int16_t pitch;
-    uint16_t yaw;
-    float alt;
-    int32_t lat;
-    int32_t lng;
-};
-
-struct PACKED log_POWR {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    uint16_t Vcc;
-    uint16_t Vservo;
-    uint16_t flags;
-};
-
-struct PACKED log_EKF1 {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    int16_t roll;
-    int16_t pitch;
-    uint16_t yaw;
-    float velN;
-    float velE;
-    float velD;
-    float posN;
-    float posE;
-    float posD;
-    int16_t gyrX;
-    int16_t gyrY;
-    int16_t gyrZ;
-};
-
-struct PACKED log_EKF2 {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    int8_t accX;
-    int8_t accY;
-    int8_t accZ;
-    int16_t windN;
-    int16_t windE;
-    int16_t magN;
-    int16_t magE;
-    int16_t magD;
-    int16_t magX;
-    int16_t magY;
-    int16_t magZ;
-};
-
-struct PACKED log_EKF3 {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    int16_t innovVN;
-    int16_t innovVE;
-    int16_t innovVD;
-    int16_t innovPN;
-    int16_t innovPE;
-    int16_t innovPD;
-    int16_t innovMX;
-    int16_t innovMY;
-    int16_t innovMZ;
-    int16_t innovVT;
-};
-
-struct PACKED log_EKF4 {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    int16_t sqrtvarV;
-    int16_t sqrtvarP;
-    int16_t sqrtvarH;
-    int16_t sqrtvarMX;
-    int16_t sqrtvarMY;
-    int16_t sqrtvarMZ;
-    int16_t sqrtvarVT;
-    int8_t  offsetNorth;
-    int8_t  offsetEast;
-    uint8_t faults;
-    uint8_t divergeRate;
-};
-
-struct PACKED log_Cmd {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    uint16_t command_total;
-    uint16_t sequence;
-    uint16_t command;
-    float param1;
-    float param2;
-    float param3;
-    float param4;
-    float latitude;
-    float longitude;
-    float altitude;
-};
-
-struct PACKED log_Radio {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    uint8_t rssi;
-    uint8_t remrssi;
-    uint8_t txbuf;
-    uint8_t noise;
-    uint8_t remnoise;
-    uint16_t rxerrors;
-    uint16_t fixed;
-};
-
-struct PACKED log_Camera {
-    LOG_PACKET_HEADER;
-    uint32_t gps_time;
-    uint16_t gps_week;
-    int32_t  latitude;
-    int32_t  longitude;
-    int32_t  altitude;
-    int32_t  altitude_rel;
-    int16_t  roll;
-    int16_t  pitch;
-    uint16_t yaw;
-};
-
-/*
-  terrain log structure
- */
-struct PACKED log_TERRAIN {
-    LOG_PACKET_HEADER;
-    uint32_t time_ms;
-    uint8_t status;
-    int32_t lat;
-    int32_t lng;
-    uint16_t spacing;
-    float terrain_height;
-    float current_height;
-    uint16_t pending;
-    uint16_t loaded;
-};
-
-/*
-  UBlox logging
- */
-struct PACKED log_Ubx1 {
-    LOG_PACKET_HEADER;
-    uint32_t timestamp;
-    uint8_t  instance;
-    uint16_t noisePerMS;
-    uint8_t  jamInd;
-    uint8_t  aPower;
-};
-
-struct PACKED log_Ubx2 {
-    LOG_PACKET_HEADER;
-    uint32_t timestamp;
-    uint8_t  instance;
-    int8_t   ofsI;
-    uint8_t  magI;
-    int8_t   ofsQ;
-    uint8_t  magQ;
-};
-
-// messages for all boards
-#define LOG_BASE_STRUCTURES \
-    { LOG_FORMAT_MSG, sizeof(log_Format), \
-      "FMT", "BBnNZ",      "Type,Length,Name,Format,Columns" },    \
-    { LOG_PARAMETER_MSG, sizeof(log_Parameter), \
-      "PARM", "Nf",        "Name,Value" },    \
-    { LOG_GPS_MSG, sizeof(log_GPS), \
-      "GPS",  "BIHBcLLeeEefI", "Status,TimeMS,Week,NSats,HDop,Lat,Lng,RelAlt,Alt,Spd,GCrs,VZ,T" }, \
-    { LOG_IMU_MSG, sizeof(log_IMU), \
-      "IMU",  "Iffffff",     "TimeMS,GyrX,GyrY,GyrZ,AccX,AccY,AccZ" }, \
-    { LOG_MESSAGE_MSG, sizeof(log_Message), \
-      "MSG",  "Z",     "Message"}, \
-    { LOG_RCIN_MSG, sizeof(log_RCIN), \
-      "RCIN",  "Ihhhhhhhhhhhhhh",     "TimeMS,C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,C11,C12,C13,C14" }, \
-    { LOG_RCOUT_MSG, sizeof(log_RCOUT), \
-      "RCOU",  "Ihhhhhhhhhhhh",     "TimeMS,Ch1,Ch2,Ch3,Ch4,Ch5,Ch6,Ch7,Ch8,Ch9,Ch10,Ch11,Ch12" }, \
-    { LOG_BARO_MSG, sizeof(log_BARO), \
-      "BARO",  "Iffc",     "TimeMS,Alt,Press,Temp" }, \
-    { LOG_POWR_MSG, sizeof(log_POWR), \
-      "POWR","ICCH","TimeMS,Vcc,VServo,Flags" },  \
-    { LOG_CMD_MSG, sizeof(log_Cmd), \
-      "CMD", "IHHHfffffff","TimeMS,CTot,CNum,CId,Prm1,Prm2,Prm3,Prm4,Lat,Lng,Alt" }, \
-    { LOG_RADIO_MSG, sizeof(log_Radio), \
-      "RAD", "IBBBBBHH", "TimeMS,RSSI,RemRSSI,TxBuf,Noise,RemNoise,RxErrors,Fixed" }, \
-    { LOG_CAMERA_MSG, sizeof(log_Camera), \
-      "CAM", "IHLLeeccC","GPSTime,GPSWeek,Lat,Lng,Alt,RelAlt,Roll,Pitch,Yaw" }
-
-// messages for more advanced boards
-#define LOG_EXTRA_STRUCTURES \
-    { LOG_GPS2_MSG, sizeof(log_GPS2), \
-      "GPS2",  "BIHBcLLeEefIBI", "Status,TimeMS,Week,NSats,HDop,Lat,Lng,Alt,Spd,GCrs,VZ,T,DSc,DAg" }, \
-    { LOG_IMU2_MSG, sizeof(log_IMU), \
-      "IMU2",  "Iffffff",     "TimeMS,GyrX,GyrY,GyrZ,AccX,AccY,AccZ" }, \
-    { LOG_IMU3_MSG, sizeof(log_IMU), \
-      "IMU3",  "Iffffff",     "TimeMS,GyrX,GyrY,GyrZ,AccX,AccY,AccZ" }, \
-    { LOG_AHR2_MSG, sizeof(log_AHRS), \
-      "AHR2","IccCfLL","TimeMS,Roll,Pitch,Yaw,Alt,Lat,Lng" }, \
-    { LOG_SIMSTATE_MSG, sizeof(log_AHRS), \
-      "SIM","IccCfLL","TimeMS,Roll,Pitch,Yaw,Alt,Lat,Lng" }, \
-    { LOG_EKF1_MSG, sizeof(log_EKF1), \
-      "EKF1","IccCffffffccc","TimeMS,Roll,Pitch,Yaw,VN,VE,VD,PN,PE,PD,GX,GY,GZ" }, \
-    { LOG_EKF2_MSG, sizeof(log_EKF2), \
-      "EKF2","Ibbbcchhhhhh","TimeMS,AX,AY,AZ,VWN,VWE,MN,ME,MD,MX,MY,MZ" }, \
-    { LOG_EKF3_MSG, sizeof(log_EKF3), \
-      "EKF3","Icccccchhhc","TimeMS,IVN,IVE,IVD,IPN,IPE,IPD,IMX,IMY,IMZ,IVT" }, \
-    { LOG_EKF4_MSG, sizeof(log_EKF4), \
-      "EKF4","IcccccccbbBB","TimeMS,SV,SP,SH,SMX,SMY,SMZ,SVT,OFN,EFE,FS,DS" }, \
-    { LOG_TERRAIN_MSG, sizeof(log_TERRAIN), \
-      "TERR","IBLLHffHH","TimeMS,Status,Lat,Lng,Spacing,TerrH,CHeight,Pending,Loaded" }, \
-    { LOG_UBX1_MSG, sizeof(log_Ubx1), \
-      "UBX1", "IBHBB",  "TimeMS,Instance,noisePerMS,jamInd,aPower" }, \
-    { LOG_UBX2_MSG, sizeof(log_Ubx2), \
-      "UBX2", "IBbBbB", "TimeMS,Instance,ofsI,magI,ofsQ,magQ" }
-
-#if HAL_CPU_CLASS >= HAL_CPU_CLASS_75
-#define LOG_COMMON_STRUCTURES LOG_BASE_STRUCTURES, LOG_EXTRA_STRUCTURES
-#else
-#define LOG_COMMON_STRUCTURES LOG_BASE_STRUCTURES
+#if AP_AHRS_NAVEKF_AVAILABLE
+    void Log_Write_EKF2(AP_AHRS_NavEKF &ahrs);
+    void Log_Write_EKF3(AP_AHRS_NavEKF &ahrs);
 #endif
 
-// message types 0 to 100 reversed for vehicle specific use
+    void Log_Write_Baro_instance(uint64_t time_us, uint8_t baro_instance, enum LogMessages type);
+    void Log_Write_IMU_instance(uint64_t time_us,
+                                uint8_t imu_instance,
+                                enum LogMessages type);
+    void Log_Write_Compass_instance(uint64_t time_us,
+                                    uint8_t mag_instance,
+                                    enum LogMessages type);
+    void Log_Write_Current_instance(uint64_t time_us,
+                                    uint8_t battery_instance,
+                                    enum LogMessages type,
+                                    enum LogMessages celltype);
+    void Log_Write_IMUDT_instance(uint64_t time_us,
+                                  uint8_t imu_instance,
+                                  enum LogMessages type);
 
-// message types for common messages
-#define LOG_FORMAT_MSG	  128
-#define LOG_PARAMETER_MSG 129
-#define LOG_GPS_MSG		  130
-#define LOG_IMU_MSG		  131
-#define LOG_MESSAGE_MSG	  132
-#define LOG_RCIN_MSG      133
-#define LOG_RCOUT_MSG     134
-#define LOG_IMU2_MSG	  135
-#define LOG_BARO_MSG	  136
-#define LOG_POWR_MSG	  137
-#define LOG_AHR2_MSG	  138
-#define LOG_SIMSTATE_MSG  139
-#define LOG_EKF1_MSG      140
-#define LOG_EKF2_MSG      141
-#define LOG_EKF3_MSG      142
-#define LOG_EKF4_MSG      143
-#define LOG_GPS2_MSG	  144
-#define LOG_CMD_MSG       145
-#define LOG_RADIO_MSG	  146
-#define LOG_ATRP_MSG      147
-#define LOG_CAMERA_MSG    148
-#define LOG_IMU3_MSG	  149
-#define LOG_TERRAIN_MSG   150
-#define LOG_UBX1_MSG      151
-#define LOG_UBX2_MSG      152
+    void backend_starting_new_log(const DataFlash_Backend *backend);
 
-// message types 200 to 210 reversed for GPS driver use
-// message types 211 to 220 reversed for autotune use
+private:
+    static DataFlash_Class *_instance;
 
-#include "DataFlash_Block.h"
-#include "DataFlash_File.h"
-
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+    bool validate_structure(const struct LogStructure *logstructure, int16_t offset);
+    void validate_structures(const struct LogStructure *logstructures, const uint8_t num_types);
+    void dump_structure_field(const struct LogStructure *logstructure, const char *label, const uint8_t fieldnum);
+    void dump_structures(const struct LogStructure *logstructures, const uint8_t num_types);
+    void assert_same_fmt_for_name(const log_write_fmt *f,
+                                  const char *name,
+                                  const char *labels,
+                                  const char *units,
+                                  const char *mults,
+                                  const char *fmt) const;
+    const char* unit_name(const uint8_t unit_id);
+    double multiplier_name(const uint8_t multiplier_id);
+    bool seen_ids[256] = { };
 #endif
+
+    void Log_Write_EKF_Timing(const char *name, uint64_t time_us, const struct ekf_timing &timing);
+
+    // possibly expensive calls to start log system:
+    void Prep();
+
+    bool _writes_enabled:1;
+
+    /* support for retrieving logs via mavlink: */
+
+    enum transfer_activity_t : uint8_t {
+        IDLE,    // not doing anything, all file descriptors closed
+        LISTING, // actively sending log_entry packets
+        SENDING, // actively sending log_sending packets
+    } transfer_activity = IDLE;
+
+    // next log list entry to send
+    uint16_t _log_next_list_entry;
+
+    // last log list entry to send
+    uint16_t _log_last_list_entry;
+
+    // number of log files
+    uint16_t _log_num_logs;
+
+    // log number for data send
+    uint16_t _log_num_data;
+
+    // offset in log
+    uint32_t _log_data_offset;
+
+    // size of log file
+    uint32_t _log_data_size;
+
+    // number of bytes left to send
+    uint32_t _log_data_remaining;
+
+    // start page of log data
+    uint16_t _log_data_page;
+
+    GCS_MAVLINK *_log_sending_link;
+
+    bool should_handle_log_message();
+    void handle_log_message(class GCS_MAVLINK &, mavlink_message_t *msg);
+
+    void handle_log_request_list(class GCS_MAVLINK &, mavlink_message_t *msg);
+    void handle_log_request_data(class GCS_MAVLINK &, mavlink_message_t *msg);
+    void handle_log_request_erase(class GCS_MAVLINK &, mavlink_message_t *msg);
+    void handle_log_request_end(class GCS_MAVLINK &, mavlink_message_t *msg);
+    void handle_log_send_listing(); // handle LISTING state
+    void handle_log_sending(); // handle SENDING state
+    bool handle_log_send_data(); // send data chunk to client
+
+    void get_log_info(uint16_t log_num, uint32_t &size, uint32_t &time_utc);
+
+    int16_t get_log_data(uint16_t log_num, uint16_t page, uint32_t offset, uint16_t len, uint8_t *data);
+
+    /* end support for retrieving logs via mavlink: */
+
+};
